@@ -261,6 +261,19 @@ func gitRepoMatch(repoUrl, repoOwner, repoName string) bool {
 			return true
 		}
 	}
+	// Fallback: case-insensitive match on the owner/repo path suffix to support
+	// non-GitHub git hosts (e.g. AWS CodeConnections, mirrors).
+	pathSuffixes := []string{
+		fmt.Sprintf("/%s/%s.git", repoOwner, repoName),
+		fmt.Sprintf("/%s/%s", repoOwner, repoName),
+	}
+	repoUrlLower := strings.ToLower(repoUrl)
+	for _, suffix := range pathSuffixes {
+		if strings.HasSuffix(repoUrlLower, strings.ToLower(suffix)) {
+			log.Debug().Msgf("gitRepoMatch() - fallback path-suffix match: %s ends with %s", repoUrl, suffix)
+			return true
+		}
+	}
 	return false
 }
 
