@@ -116,22 +116,23 @@ func getMultiSrcAppChanges(ctx context.Context, appCur *Application, appNew *App
 // diffed because ctx ran out of time. Diffing stops at that point rather than
 // firing calls that are guaranteed to fail, and the partial results collected so
 // far are returned so the caller can still report them.
-func GetApplicationChanges(ctx context.Context, eventInfo webhook.EventInfo) ([]ApplicationResourcesWithChanges, []string, error) {
+func GetApplicationChanges(ctx context.Context, eventInfo webhook.EventInfo) ([]ApplicationResourcesWithChanges, []string, []string, error) {
 	log.Trace().Msgf("GetApplicationChanges(%+v)", eventInfo)
 	var appResList []ApplicationResourcesWithChanges
 	var notDiffed []string
+	var skipped []string
 	argoApps, err := listApplications(ctx)
 	if err != nil {
-		return appResList, notDiffed, err
+		return appResList, notDiffed, skipped, err
 	}
 	log.Trace().Msgf("listApplications() returned %d items", len(argoApps.Items))
 	if len(argoApps.Items) == 0 {
-		return appResList, notDiffed, fmt.Errorf("empty ArgoCD app list")
+		return appResList, notDiffed, skipped, fmt.Errorf("empty ArgoCD app list")
 	}
 	appLookup := appListToMap(argoApps.Items)
-	apps, err := filterApplications(argoApps.Items, eventInfo, false)
+	apps, skipped, err := filterApplications(argoApps.Items, eventInfo, false)
 	if err != nil {
-		return appResList, notDiffed, err
+		return appResList, notDiffed, skipped, err
 	}
 	log.Debug().Msgf("Matching apps: %s", func() (s string) {
 		for _, app := range apps {
@@ -206,9 +207,16 @@ func GetApplicationChanges(ctx context.Context, eventInfo webhook.EventInfo) ([]
 		}
 	}
 	// re-filter applications, except this time with multi-source
-	apps, err = filterApplications(argoApps.Items, eventInfo, true)
+	var skippedMultiSrc []string
+	apps, skippedMultiSrc, err = filterApplications(argoApps.Items, eventInfo, true)
 	if err != nil {
-		return appResList, notDiffed, err
+		return appResList, notDiffed, skipped, err
+	}
+	for _, name := range skippedMultiSrc {
+		// an app with both source and sources set is filtered in both passes
+		if !slices.Contains(skipped, name) {
+			skipped = append(skipped, name)
+		}
 	}
 	log.Debug().Msgf("Matching multi-source apps: %s", func() (s string) {
 		for _, app := range apps {
@@ -254,12 +262,15 @@ func GetApplicationChanges(ctx context.Context, eventInfo webhook.EventInfo) ([]
 	if len(notDiffed) > 0 {
 		log.Error().Err(ctx.Err()).Msgf("Ran out of time; %d application(s) were not diffed: %s", len(notDiffed), strings.Join(notDiffed, ", "))
 	}
-	return appResList, notDiffed, nil
+	if len(skipped) > 0 {
+		log.Warn().Msgf("Skipped %d application(s) without a %s annotation: %s", len(skipped), manifestGeneratePathsAnnotation, strings.Join(skipped, ", "))
+	}
+	return appResList, notDiffed, skipped, nil
 }
 
 // Returns a list of Applications whose git URLs match repo owner & name
 // eventInfo.RepoOwner, eventInfo.RepoName, eventInfo.RepoDefaultRef, eventInfo.ChangeRef, eventInfo.BaseRef string
-func filterApplications(a []Application, eventInfo webhook.EventInfo, multiSource bool) ([]Application, error) {
+func filterApplications(a []Application, eventInfo webhook.EventInfo, multiSource bool) ([]Application, []string, error) {
 	log.Trace().Msgf("filterApplications([%d apps], %+v)", len(a), eventInfo)
 	var appList []Application
 	for _, app := range a {
@@ -288,10 +299,11 @@ func filterApplications(a []Application, eventInfo webhook.EventInfo, multiSourc
 	}
 	if len(eventInfo.ChangedFiles) > 0 {
 		log.Debug().Msg("Attempting to filter applications based on manifest-generate-paths annotation")
-		return FilterApplicationsByPath(appList, eventInfo.ChangedFiles), nil
+		matched, skipped := FilterApplicationsByPath(appList, eventInfo.ChangedFiles)
+		return matched, skipped, nil
 	}
 	log.Debug().Msg("No changed files in event info; skipping check for manifest-generate-paths")
-	return appList, nil
+	return appList, nil, nil
 }
 
 func gitRepoMatch(appSrc ApplicationSource, repoOwner, repoName string) bool {

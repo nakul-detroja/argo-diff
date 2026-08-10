@@ -67,6 +67,14 @@ Matching rules worth knowing:
   annotation, or `/`, means "always include". Relative patterns are joined with `source.path`,
   absolute ones are repo-root relative; glob patterns (`*?[`) go through `filepath.Match`, plain
   ones are treated as directory prefixes.
+- `ARGO_DIFF_REQUIRE_MANIFEST_PATHS=true` inverts the "no annotation means always include" default:
+  unannotated apps are skipped and returned as the second value, which
+  `GetApplicationChanges()` merges across both filter passes and hands to the caller to report. It
+  exists for monorepos where most apps lack the annotation, so nearly every app is diffed on every
+  PR and `ARGO_DIFF_TIMEOUT` expires before the changed apps are reached. `/` and an empty value
+  are explicit opt-ins and still include the app. Apps that have the annotation but don't match are
+  **not** reported as skipped — that's a normal non-match. Nested app-of-apps children are found in
+  a matched parent's diff rather than through this filter, so they are unaffected.
 
 ## Timeouts and partial results
 
