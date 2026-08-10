@@ -71,6 +71,11 @@ func logEnvironmentVariables() {
 		"ARGO_DIFF_CONTEXT_STR",
 		"ARGO_DIFF_CI",
 		"ARGO_DIFF_COMMENT_PREAMBLE",
+		"ARGO_DIFF_ROUTED",
+		"ARGO_DIFF_AWS_PREFIX",
+		"ARGO_DIFF_ENVS",
+		"ARGO_DIFF_SPEC_PATHS",
+		"ARGO_DIFF_REQUIRE_MANIFEST_PATHS",
 		"COMMENT_LINE_MAX_CHARS",
 	}
 	for _, key := range nonSensitiveVars {
@@ -140,7 +145,11 @@ func ProcessFileEvent(filePath string, devMode bool) error {
 
 	wg := sync.WaitGroup{}
 	wg.Add(1)
-	go process_event.ProcessCodeChange(*evtp, devMode, &wg, &err)
+	if process_event.RoutedEnabled() {
+		go process_event.ProcessCodeChangeRouted(*evtp, devMode, &wg, &err)
+	} else {
+		go process_event.ProcessCodeChange(*evtp, devMode, &wg, &err)
+	}
 	wg.Wait()
 	return err
 }
@@ -154,7 +163,11 @@ func ProcessGithubAction() error {
 	}
 	wg := sync.WaitGroup{}
 	wg.Add(1)
-	go process_event.ProcessCodeChange(*evtp, true, &wg, &err)
+	if process_event.RoutedEnabled() {
+		go process_event.ProcessCodeChangeRouted(*evtp, true, &wg, &err)
+	} else {
+		go process_event.ProcessCodeChange(*evtp, true, &wg, &err)
+	}
 	wg.Wait()
 	return err
 }

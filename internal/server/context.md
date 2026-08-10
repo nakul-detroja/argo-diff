@@ -46,6 +46,8 @@ left to report it to.
 - **`ProcessGithubAction()` passes `devMode=true`.** That is not a bug: dev mode's only remaining
   effect at that point is dry-running commit statuses, which `github.Status()` already skips under
   Actions. Comments are still posted.
+- Both run-once entry points dispatch to `process_event.ProcessCodeChangeRouted()` instead of
+  `ProcessCodeChange()` when `ARGO_DIFF_ROUTED=true`. The webhook server never routes.
 - `logEnvironmentVariables()` dumps configuration at debug level, redacting the sensitive vars to
   their first three characters. **Add new env vars to one of its two lists** when you introduce
   them.

@@ -17,7 +17,8 @@ changes.
 | `cmd/` | Entry point: flags, env validation, mode dispatch |
 | `internal/argocd/` | Wrapper around the `argocd` CLI; application matching and diffing |
 | `internal/github/` | GitHub API client, PR comments, commit statuses |
-| `internal/process_event/` | Orchestrates one event: diff → commit status → PR comment |
+| `internal/process_event/` | Orchestrates one event: diff → commit status → PR comment (routed multi-project variant in `routed.go`) |
+| `internal/routes/` | Routed mode: SSM route maps → affected AppProjects; Secrets Manager → project-scoped tokens (via aws CLI) |
 | `internal/server/` | HTTP webhook server plus the run-once entry points |
 | `internal/webhook/` | Webhook payload parsing (`EventInfo`) and signature verification |
 | `internal/gendiff/` | Unified-diff helper; currently unused by the rest of the code |

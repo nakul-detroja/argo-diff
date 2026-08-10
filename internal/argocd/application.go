@@ -19,11 +19,25 @@ type ApplicationSpec struct {
 }
 
 type ApplicationSource struct {
-	RepoURL        string `json:"repoURL"`
-	TargetRevision string `json:"targetRevision"`
-	Path           string `json:"path,omitempty"`
-	Chart          string `json:"chart,omitempty"`
-	Ref            string `json:"ref,omitempty"`
+	RepoURL        string                 `json:"repoURL"`
+	TargetRevision string                 `json:"targetRevision"`
+	Path           string                 `json:"path,omitempty"`
+	Chart          string                 `json:"chart,omitempty"`
+	Ref            string                 `json:"ref,omitempty"`
+	Helm           *ApplicationSourceHelm `json:"helm,omitempty"`
+}
+
+// ApplicationSourceHelm carries the Helm-specific source fields needed for
+// spec-derived path matching (see spec_paths.go): the value files feeding a
+// chart are git paths that affect the rendered manifests.
+type ApplicationSourceHelm struct {
+	ValueFiles     []string            `json:"valueFiles,omitempty"`
+	FileParameters []HelmFileParameter `json:"fileParameters,omitempty"`
+}
+
+type HelmFileParameter struct {
+	Name string `json:"name,omitempty"`
+	Path string `json:"path,omitempty"`
 }
 
 type SyncPolicy struct {

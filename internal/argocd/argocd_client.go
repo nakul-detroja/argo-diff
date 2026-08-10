@@ -20,7 +20,8 @@ import (
 
 var (
 	httpBearerToken       string
-	commonCliArgv         []string
+	envServerAddr         string
+	commonCliArgv         []string // flags shared by every invocation, minus --server/--auth-token (see execArgoCdCli)
 	envArgoCdOpts         string
 	appDiffServerSideDiff string
 )
@@ -33,11 +34,10 @@ func init() {
 	plaintext := strings.ToLower(os.Getenv("ARGOCD_SERVER_PLAINTEXT")) == "true"
 	grpcWeb := strings.ToLower(os.Getenv("ARGOCD_GRPC_WEB")) == "true"
 	grpcWebRoot := os.Getenv("ARGOCD_GRPC_WEB_ROOT_PATH")
+	envServerAddr = serverAddr
 	if serverAddr == "" || httpBearerToken == "" {
-		log.Warn().Msg("Initialized with incomplete ArgoCD server config")
+		log.Warn().Msg("Initialized with incomplete ArgoCD server config (expected in routed mode, where targets are set per AppProject)")
 	}
-	commonCliArgv = append(commonCliArgv, "--server", serverAddr)
-	commonCliArgv = append(commonCliArgv, "--auth-token", httpBearerToken)
 	if insecure {
 		commonCliArgv = append(commonCliArgv, "--insecure")
 	}
@@ -83,7 +83,11 @@ func logTraceCommandEnv(cmd *exec.Cmd) {
 var execArgoCdCli = func(ctx context.Context, args []string) ([]byte, error) {
 	argocdCmdName := argocdCmdFromEnv()
 	log.Info().Msgf("Executing %s with args %s", argocdCmdName, strings.Join(args, " "))
-	argv := append(commonCliArgv, args...)
+	// Server and token are resolved per call so routed mode can point each
+	// AppProject's diffs at its own hub with its own scoped token (target.go).
+	argv := []string{"--server", effectiveServerAddr(), "--auth-token", effectiveAuthToken()}
+	argv = append(argv, commonCliArgv...)
+	argv = append(argv, args...)
 	cmd := exec.CommandContext(ctx, argocdCmdName, argv...)
 	cmd.Env = append(cmd.Environ(), "KUBECTL_EXTERNAL_DIFF=diff -u")
 	if envArgoCdOpts != "" {

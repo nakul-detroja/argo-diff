@@ -9,19 +9,26 @@ Wrapper around the **`argocd` CLI** — not an HTTP API client. Everything here 
 | ---- | -------- |
 | `argocd_client.go` | CLI argv construction, `execArgoCdCli`, and the parsers for its output |
 | `helper.go` | The public entry points: `ConnectivityCheck()`, `GetApplicationChanges()`, plus application matching (`filterApplications`, `checkSource`, `gitRepoMatch`) and app-of-apps handling |
-| `application.go` | Trimmed-down copies of ArgoCD's `Application` types — only the fields used here, so the ArgoCD source tree isn't a dependency |
+| `application.go` | Trimmed-down copies of ArgoCD's `Application` types — only the fields used here, so the ArgoCD source tree isn't a dependency (includes `helm.valueFiles`/`fileParameters` for spec-derived matching) |
 | `filter_manifest_paths.go` | `FilterApplicationsByPath()` — the `argocd.argoproj.io/manifest-generate-paths` filter |
+| `spec_paths.go` | `FilterApplicationsBySpecPaths()` — annotation-free matching on paths derived from each application's spec; fails open (see below) |
+| `target.go` | `SetTarget()`/`ClearTarget()` — per-AppProject server/token override for routed mode |
 | `types.go` | `AppResource`, `ApplicationResourcesWithChanges`, `K8sManifest` |
 
 ## CLI invocation
 
-`init()` builds `commonCliArgv` once from the environment: `--server`, `--auth-token`, and
-optionally `--insecure`, `--plaintext`, `--grpc-web`, `--grpc-web-root-path`. It also captures
-`ARGOCD_OPTS` and validates `ARGOCD_APP_DIFF_SERVER_SIDE_DIFF` (must be `true`/`false`).
+`init()` builds `commonCliArgv` once from the environment: `--insecure`, `--plaintext`,
+`--grpc-web`, `--grpc-web-root-path` as applicable. It also captures `ARGOCD_OPTS` and validates
+`ARGOCD_APP_DIFF_SERVER_SIDE_DIFF` (must be `true`/`false`). `--server` and `--auth-token` are
+**resolved per invocation** (`effectiveServerAddr()`/`effectiveAuthToken()` in `target.go`): the
+env values by default, or the `SetTarget()` override in routed mode, where each AppProject is
+diffed against its own hub with its own scoped token. Targets are processed sequentially, so the
+single package-level override slot is safe; webhook-server mode never calls `SetTarget()`.
 
 `execArgoCdCli` is a **package-level `var`, so tests can replace it** — that is the mocking seam
-for this whole package. It prepends `commonCliArgv`, sets `KUBECTL_EXTERNAL_DIFF=diff -u` (hence
-`diffutils` in the Dockerfile), and re-injects `ARGOCD_OPTS`.
+for this whole package. It prepends the resolved credentials plus `commonCliArgv`, sets
+`KUBECTL_EXTERNAL_DIFF=diff -u` (hence `diffutils` in the Dockerfile), and re-injects
+`ARGOCD_OPTS`.
 
 `argocdCmdFromEnv()` honors `ARGOCD_CLI_CMD_NAME` (default `argocd`).
 
@@ -67,6 +74,14 @@ Matching rules worth knowing:
   annotation, or `/`, means "always include". Relative patterns are joined with `source.path`,
   absolute ones are repo-root relative; glob patterns (`*?[`) go through `filepath.Match`, plain
   ones are treated as directory prefixes.
+- `ARGO_DIFF_SPEC_PATHS=true` replaces the annotation filter entirely:
+  `FilterApplicationsBySpecPaths()` computes each application's paths from its own spec —
+  `source.path`, `helm.valueFiles` + `fileParameters` (joined to the source path), and
+  `$ref/...` value files resolved against the ref'd source (repo-root relative). Derivation
+  cannot drift the way hand-maintained annotations can, and every ambiguous case **fails open**:
+  a repo-root source, a chart-only app, or a spec yielding no patterns is included rather than
+  skipped. The failure direction is always "extra diff", never "silently missing diff". When set,
+  annotations and `ARGO_DIFF_REQUIRE_MANIFEST_PATHS` are ignored.
 - `ARGO_DIFF_REQUIRE_MANIFEST_PATHS=true` inverts the "no annotation means always include" default:
   unannotated apps are skipped and returned as the second value, which
   `GetApplicationChanges()` merges across both filter passes and hands to the caller to report. It
