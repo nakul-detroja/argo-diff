@@ -2,7 +2,7 @@
 
 Helm chart for Argo-Diff
 
-![Version: 2.7.0](https://img.shields.io/badge/Version-2.7.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 2.7.0](https://img.shields.io/badge/AppVersion-2.7.0-informational?style=flat-square)
+![Version: 2.13.0](https://img.shields.io/badge/Version-2.13.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 2.13.0](https://img.shields.io/badge/AppVersion-2.13.0-informational?style=flat-square)
 
 ## Extended Description
 
@@ -20,6 +20,12 @@ $ helm install my-release oci://ghcr.io/vince-riv/chart/argo-diff
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
+| argocdCli | object | `{"image":{"pullPolicy":"IfNotPresent","registry":"quay.io","repository":"argoproj/argocd","tag":""},"volumeSizeLimit":"2Gi"}` | Pin the version of the argocd CLI argo-diff runs, independent of the argo-diff image. |
+| argocdCli.image.pullPolicy | string | `"IfNotPresent"` | Image pull policy for the argocd CLI initContainer |
+| argocdCli.image.registry | string | `"quay.io"` | Registry hosting the ArgoCD image the argocd CLI is copied from |
+| argocdCli.image.repository | string | `"argoproj/argocd"` | Repository of the ArgoCD image the argocd CLI is copied from |
+| argocdCli.image.tag | string | `""` | Tag of the ArgoCD image to copy the argocd CLI binary from; this is how you pin the version of the argocd CLI argo-diff runs (eg: "v3.4.6", or "v3.4.6@sha256:..." to also pin the digest). When set, an initContainer copies the argocd binary out of that image into a shared emptyDir volume and argo-diff is pointed at it via ARGOCD_CLI_CMD_NAME. When empty, argo-diff uses the argocd binary baked into its own image. |
+| argocdCli.volumeSizeLimit | string | `"2Gi"` | Max size of the emptyDir volume the argocd CLI binary is copied into |
 | command[0] | string | `"/app/argo-diff"` |  |
 | config.argocd.authToken | string | `""` |  |
 | config.argocd.grpcWeb | string | `""` |  |

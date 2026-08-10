@@ -1,21 +1,18 @@
-## Build
-FROM golang:1.25@sha256:dfae680962532eeea67ab297f1166c2c4e686edb9a8f05f9d02d96fc9191833e AS build
+## "Build" (but it was pre-built)
+FROM alpine:latest@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS build
 
-ARG VERSION=dev
+# TARGETARCH is set automatically by BuildKit (e.g., "amd64" or "arm64")
+ARG TARGETARCH
 
 WORKDIR /src
 
-COPY . .
+COPY temp/argo-diff-linux-${TARGETARCH} argo-diff
 
-RUN go mod download
-
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-X 'main.Version=${VERSION}'" -o argo-diff ./cmd/
-
-## ArgoCD CLI — pin to server version used in target environments (see Dockerfile.actions).
-FROM quay.io/argoproj/argocd:v3.2.7 AS argocd
+## ArgoCD
+FROM quay.io/argoproj/argocd:v3.5.0@sha256:c298cedbaeb31532ba8d4e9904eba9e4987e067293fbd86400c5194e78f743d5 AS argocd
 
 ## Final image
-FROM alpine:latest@sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659
+FROM alpine:latest@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 # add new user
 RUN adduser -D argo-diff

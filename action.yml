@@ -1,6 +1,11 @@
 ---
 
+name: 'argo-diff'
 description: 'Preview k8s manifest changes using argocd diff'
+author: 'vince-riv'
+branding:
+  icon: 'git-pull-request'
+  color: 'blue'
 inputs:
   argocd_auth_token:
     description: 'Bearer token for ArgoCD (value passed to --auth-token)'
@@ -60,16 +65,22 @@ inputs:
     required: false
     default: info
   repo_default_ref:
-    decription: 'Default branch of repository (eg: "main"); only needed when `HEAD` is specified as target revision in ArgoCD application source'
+    description: 'Default branch of repository (eg: "main"); only needed when `HEAD` is specified as target revision in ArgoCD application source'
+    required: false
+    default: ''
+  timeout:
+    description: 'How long argo-diff may spend processing the event, as a Go duration (eg: "5m", "90s"). Raise when the change matches many ArgoCD applications. Defaults to 3m'
     required: false
     default: ''
 
 runs:
   using: 'docker'
-  image: 'Dockerfile.actions'
+  image: 'docker://ghcr.io/vince-riv/argo-diff:2.13.0'
+  entrypoint: '/app/argo-diff'
   env:
     ARGO_DIFF_COMMENT_PREAMBLE: ${{ inputs.comment_preamble }}
     ARGO_DIFF_CONTEXT_STR: ${{ inputs.context_str }}
+    ARGO_DIFF_TIMEOUT: ${{ inputs.timeout }}
     ARGOCD_AUTH_TOKEN: ${{ inputs.argocd_auth_token }}
     ARGOCD_APP_DIFF_SERVER_SIDE_DIFF: ${{ inputs.argocd_app_server_side_diff }}
     ARGOCD_GRPC_WEB: ${{ inputs.argocd_grpc_web }}

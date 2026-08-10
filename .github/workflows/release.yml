@@ -1,0 +1,132 @@
+---
+name: Release
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+      - '[0-9]+.[0-9]+.[0-9]+-*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Tag to release'
+        required: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+          fetch-depth: 0
+          fetch-tags: 'true'
+      - name: Determine release version
+        id: relmeta
+        run: |
+          VERSION="${{ github.event.inputs.ref || github.ref_name }}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "major=${VERSION%%.*}" >> "$GITHUB_OUTPUT"
+          if [[ "${VERSION}" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Determine previous stable release
+        id: prevstable
+        if: ${{ steps.relmeta.outputs.prerelease == 'false' }}
+        run: |
+          VERSION="${{ steps.relmeta.outputs.version }}"
+          STABLE_TAGS="$(git tag -l | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | grep -vFx "${VERSION}" || true)"
+          PREV_STABLE="$(printf '%s\n%s\n' "${STABLE_TAGS}" "${VERSION}" | sort -V | grep -B1 -Fx "${VERSION}" | head -1)"
+          echo "previous_stable=${PREV_STABLE}" >> "$GITHUB_OUTPUT"
+      - name: Verify action.yml image matches release version
+        run: |
+          VERSION="${{ steps.relmeta.outputs.version }}"
+          if ! grep -qF "docker://ghcr.io/vince-riv/argo-diff:${VERSION}'" action.yml; then
+            echo "::error::action.yml is not pinned to ${VERSION} - run scripts/prep-release.sh ${VERSION}, merge it, then tag" >&2
+            exit 1
+          fi
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
+        with:
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This repo stacks chart-*/actions-*/plain-semver tags on the same commit;
+          # pin the exact tag so GoReleaser doesn't guess the wrong one.
+          GORELEASER_CURRENT_TAG: ${{ github.event.inputs.ref || github.ref_name }}
+          # Empty on prereleases (step above is skipped) - GoReleaser falls back to
+          # its default git-describe lookup, which is fine for rc-to-rc changelogs.
+          GORELEASER_PREVIOUS_TAG: ${{ steps.prevstable.outputs.previous_stable }}
+      - name: Remap binaries for Docker build
+        run: |
+          mkdir -p temp
+          for arch in amd64 arm64 s390x ppc64le; do
+            src=("dist/argo-diff_linux_${arch}"*/argo-diff)
+            cp "${src[0]}" "temp/argo-diff-linux-${arch}"
+          done
+      -
+        name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+      -
+        name: Log in to container register
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      -
+        name: Docker meta
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=tag
+      -
+        name: Build and push multi-arch
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64,linux/arm64,linux/s390x,linux/ppc64le
+      - name: Move floating tags for stable release
+        if: ${{ steps.relmeta.outputs.prerelease == 'false' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          VERSION="${{ steps.relmeta.outputs.version }}"
+          MAJOR="${{ steps.relmeta.outputs.major }}"
+
+          # New: floating major tag (e.g. v2) - recommended entrypoint for the Action
+          git tag -f "v${MAJOR}"
+          git push origin "refs/tags/v${MAJOR}" --force
+
+          # Legacy: exact + floating actions-v tags, kept for existing consumers
+          git tag -a "actions-v${VERSION}" -m "actions-v${VERSION}"
+          git push origin "refs/tags/actions-v${VERSION}"
+          git tag -f "actions-v${MAJOR}"
+          git push origin "refs/tags/actions-v${MAJOR}" --force

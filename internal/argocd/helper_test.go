@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	wh "github.com/vince-riv/argo-diff/internal/webhook"
 )
@@ -114,6 +118,78 @@ func TestFilterApplications(t *testing.T) {
 	}
 }
 
+func TestFilterApplicationsFullyQualifiedRefs(t *testing.T) {
+	loadApps := func(t *testing.T) []Application {
+		payload, _, err := readFileToByteArray(payloadAppList)
+		if err != nil {
+			t.Fatalf("Failed to read %s: %v", payloadAppList, err)
+		}
+		var appList ApplicationList
+		if err := json.Unmarshal(payload, &appList); err != nil {
+			t.Fatalf("Error decoding ApplicationList payload: %v", err)
+		}
+		return appList.Items
+	}
+
+	// targetRevision = refs/heads/main, PR base main should match even though
+	// the PR's change branch is unrelated.
+	a := loadApps(t)
+	a[1].Spec.Source.TargetRevision = "refs/heads/main"
+	evtInfo := wh.EventInfo{RepoOwner: "vince-riv", RepoName: "argo-diff", RepoDefaultRef: "main", ChangeRef: "dev", BaseRef: "main"}
+	result, _ := filterApplications(a, evtInfo, false)
+	if len(result) != 1 {
+		t.Error("PR against main should have matched (targetRev refs/heads/main)")
+	}
+
+	// targetRevision = refs/heads/dev
+	a = loadApps(t)
+	a[1].Spec.Source.TargetRevision = "refs/heads/dev"
+	evtInfo = wh.EventInfo{RepoOwner: "vince-riv", RepoName: "argo-diff", RepoDefaultRef: "main", ChangeRef: "dev", BaseRef: "dev"}
+	result, _ = filterApplications(a, evtInfo, false)
+	if len(result) != 1 {
+		t.Error("PR against dev should have matched (targetRev refs/heads/dev)")
+	}
+	evtInfo = wh.EventInfo{RepoOwner: "vince-riv", RepoName: "argo-diff", RepoDefaultRef: "main", ChangeRef: "dev", BaseRef: "main"}
+	result, _ = filterApplications(a, evtInfo, false)
+	if len(result) != 0 {
+		t.Error("PR against main should NOT have matched (targetRev refs/heads/dev)")
+	}
+
+	// Push to refs/heads/main w/ auto-sync enabled should be filtered out,
+	// same as the short-name case.
+	a = loadApps(t)
+	a[1].Spec.Source.TargetRevision = "refs/heads/main"
+	a[1].Spec.SyncPolicy = &SyncPolicy{Automated: &SyncPolicyAutomated{}}
+	evtInfo = wh.EventInfo{RepoOwner: "vince-riv", RepoName: "argo-diff", RepoDefaultRef: "main", ChangeRef: "refs/heads/main", BaseRef: ""}
+	result, _ = filterApplications(a, evtInfo, false)
+	if len(result) != 0 {
+		t.Error("Push to main should NOT have matched (targetRev refs/heads/main) (auto-sync ENABLED)")
+	}
+
+	// Sanity: tag refs are not treated as branches.
+	a = loadApps(t)
+	a[1].Spec.Source.TargetRevision = "refs/tags/v1.0.0"
+	evtInfo = wh.EventInfo{RepoOwner: "vince-riv", RepoName: "argo-diff", RepoDefaultRef: "main", ChangeRef: "dev", BaseRef: "v1.0.0"}
+	result, _ = filterApplications(a, evtInfo, false)
+	if len(result) != 0 {
+		t.Error("PR against a tag name should NOT have matched (targetRev refs/tags/v1.0.0)")
+	}
+}
+
+func TestNormalizeBranchRef(t *testing.T) {
+	cases := map[string]string{
+		"refs/heads/main": "main",
+		"HEAD":            "HEAD",
+		"refs/tags/v1":    "refs/tags/v1",
+		"main":            "main",
+	}
+	for in, want := range cases {
+		if got := normalizeBranchRef(in); got != want {
+			t.Errorf("normalizeBranchRef(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestFilterApplicationsMultiSource(t *testing.T) {
 	var a []Application
 
@@ -146,6 +222,156 @@ func TestFilterApplicationsMultiSource(t *testing.T) {
 	result, _ = filterApplications(a, evtInfo, true)
 	if len(result) != 1 {
 		t.Errorf("Push to main should have matched 1 (auto-sync off); got %d", len(result))
+	}
+}
+
+// A multi-source app whose sources point at the changed repo more than once
+// (eg: a chart source and a values source in the same monorepo) must be
+// returned once, so it's only diffed once.
+func TestFilterApplicationsMultiSourceMatchesOnce(t *testing.T) {
+	repoURL := "https://github.com/vince-riv/argo-diff.git"
+	a := []Application{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "monorepo-app"},
+			Spec: ApplicationSpec{
+				Sources: []ApplicationSource{
+					{RepoURL: "https://charts.example.com", TargetRevision: "1.2.3", Chart: "somechart"},
+					{RepoURL: repoURL, TargetRevision: "main", Path: "charts/mychart"},
+					{RepoURL: repoURL, TargetRevision: "main", Path: "values/mychart", Ref: "values"},
+				},
+			},
+		},
+	}
+
+	evtInfo := wh.EventInfo{RepoOwner: "vince-riv", RepoName: "argo-diff", RepoDefaultRef: "main", ChangeRef: "my-branch", BaseRef: "main"}
+	result, err := filterApplications(a, evtInfo, true)
+	if err != nil {
+		t.Fatalf("filterApplications() err'd: %v", err)
+	}
+	if len(result) != 1 {
+		t.Errorf("app with 2 matching sources should be returned once; got %d", len(result))
+	}
+}
+
+// When the context is out of time, matching applications are reported as
+// not diffed instead of each one firing an `argocd app diff` that can only fail.
+func TestGetApplicationChangesOutOfTime(t *testing.T) {
+	appListData, filePath, err := readFileToByteArray(outputListApplications)
+	if err != nil {
+		t.Fatalf("Failed to read %s: %v", filePath, err)
+	}
+
+	tests := []struct {
+		name     string
+		repoName string
+		want     []string
+	}{
+		{"single source app", "argo-diff-config", []string{"argo-diff"}},
+		{"multi source app", "argo-diff-testing", []string{"argo-diff-testing"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			diffCalls := 0
+			originalExecArgoCdCli := execArgoCdCli
+			defer func() { execArgoCdCli = originalExecArgoCdCli }()
+			execArgoCdCli = func(ctx context.Context, args []string) ([]byte, error) {
+				if len(args) > 1 && args[1] == "diff" {
+					diffCalls++
+				}
+				return appListData, nil
+			}
+
+			// already out of time before any diffing starts
+			ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			defer cancel()
+
+			evtInfo := wh.EventInfo{
+				RepoOwner:      "vince-riv",
+				RepoName:       tt.repoName,
+				RepoDefaultRef: "main",
+				ChangeRef:      "my-branch",
+				BaseRef:        "main",
+				Sha:            "abcdef",
+			}
+			appResList, notDiffed, err := GetApplicationChanges(ctx, evtInfo)
+			if err != nil {
+				t.Errorf("GetApplicationChanges() err'd: %v", err)
+			}
+			if len(appResList) != 0 {
+				t.Errorf("expected no diff results, got %d", len(appResList))
+			}
+			if !slices.Equal(notDiffed, tt.want) {
+				t.Errorf("notDiffed = %v, want %v", notDiffed, tt.want)
+			}
+			if diffCalls != 0 {
+				t.Errorf("expected no `argocd app diff` calls once out of time, got %d", diffCalls)
+			}
+		})
+	}
+}
+
+// Running out of time while enumerating an app-of-apps' nested Applications
+// must still be reported: the parent's own diff succeeds, so without an entry
+// the run looks complete while every nested application diff is missing.
+func TestGetApplicationChangesOutOfTimeEnumeratingNestedApps(t *testing.T) {
+	appListData, filePath, err := readFileToByteArray(outputListApplications)
+	if err != nil {
+		t.Fatalf("Failed to read %s: %v", filePath, err)
+	}
+	// a diff whose changed resource is itself an ArgoCD Application, which sends
+	// GetApplicationChanges() into the nested-application path
+	nestedAppDiff := []byte(`===== argoproj.io/Application /nested-app ======
+--- /tmp/argocd-diff/nested-app-live.yaml	2026-07-31 21:49:00
++++ /tmp/argocd-diff/nested-app	2026-07-31 21:49:00
+@@ -1,4 +1,4 @@
+   spec:
+-    targetRevision: 1.0.0
++    targetRevision: 2.0.0
+`)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	manifestCalls := 0
+	originalExecArgoCdCli := execArgoCdCli
+	defer func() { execArgoCdCli = originalExecArgoCdCli }()
+	execArgoCdCli = func(c context.Context, args []string) ([]byte, error) {
+		switch args[1] {
+		case "list":
+			return appListData, nil
+		case "diff":
+			// the deadline lands immediately after the parent's diff succeeds
+			cancel()
+			return nestedAppDiff, makeExitError(t, nil)
+		case "manifests":
+			manifestCalls++
+			return nil, c.Err()
+		}
+		return nil, fmt.Errorf("unexpected argocd args: %v", args)
+	}
+
+	evtInfo := wh.EventInfo{
+		RepoOwner:      "vince-riv",
+		RepoName:       "argo-diff-config",
+		RepoDefaultRef: "main",
+		ChangeRef:      "my-branch",
+		BaseRef:        "main",
+		Sha:            "abcdef",
+	}
+	appResList, notDiffed, err := GetApplicationChanges(ctx, evtInfo)
+	if err != nil {
+		t.Errorf("GetApplicationChanges() err'd: %v", err)
+	}
+	if manifestCalls != 1 {
+		t.Errorf("expected 1 `argocd app manifests` call, got %d", manifestCalls)
+	}
+	// the parent's own diff succeeded and should still be reported
+	if len(appResList) != 1 {
+		t.Errorf("expected the parent app's diff in the results, got %d results", len(appResList))
+	}
+	want := []string{"nested apps of argo-diff"}
+	if !slices.Equal(notDiffed, want) {
+		t.Errorf("notDiffed = %v, want %v", notDiffed, want)
 	}
 }
 
@@ -201,5 +427,73 @@ func TestManifestIsArgoApplication(t *testing.T) {
 		} else {
 			t.Errorf("Expected 4 manifests in %s", filepath)
 		}
+	}
+}
+
+func TestGitRepoMatch(t *testing.T) {
+	const owner = "acme"
+	const repo = "widgets"
+	tests := []struct {
+		name    string
+		repoURL string
+		chart   string
+		want    bool
+	}{
+		// github.com (existing behavior)
+		{"github https .git", "https://github.com/acme/widgets.git", "", true},
+		{"github https no .git", "https://github.com/acme/widgets", "", true},
+		{"github scp ssh", "git@github.com:acme/widgets.git", "", true},
+		// non-github hosts (new fallback)
+		{"github enterprise", "https://github.example.com/acme/widgets.git", "", true},
+		{"aws codeconnections", "https://codeconnections.us-west-2.amazonaws.com/git-http/111122223333/us-west-2/1a2b3c/acme/widgets.git", "", true},
+		{"gitlab mirror no .git", "https://gitlab.example.com/group/acme/widgets", "", true},
+		{"generic scp ssh", "git@git.example.com:acme/widgets.git", "", true},
+		{"case insensitive", "https://github.example.com/ACME/Widgets.git", "", true},
+		// negatives
+		{"different repo", "https://github.example.com/acme/gadgets.git", "", false},
+		{"owner suffix must not partial match", "https://github.example.com/notacme/widgets.git", "", false},
+		{"repo name substring", "https://github.example.com/acme/widgets-internal.git", "", false},
+		{"empty url", "", "", false},
+		// Chart/OCI sources must never match, even if RepoURL's path happens to
+		// collide with owner/repo (RepoURL here is a Helm/OCI registry, not a
+		// git remote).
+		{"chart source with colliding path is never matched", "oci://registry.example.com/acme/widgets", "widgets", false},
+		{"chart source with github.com host is never matched", "https://github.com/acme/widgets.git", "widgets", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			src := ApplicationSource{RepoURL: tc.repoURL, Chart: tc.chart}
+			if got := gitRepoMatch(src, owner, repo); got != tc.want {
+				t.Errorf("gitRepoMatch(%+v, %q, %q) = %v; want %v", src, owner, repo, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestGitRepoMatch_DisableNonGithubFallback(t *testing.T) {
+	const owner = "acme"
+	const repo = "widgets"
+	tests := []struct {
+		name     string
+		repoURL  string
+		disabled string
+		want     bool
+	}{
+		{"non-github host matches when flag unset", "https://github.example.com/acme/widgets.git", "", true},
+		{"non-github host matches when flag false", "https://github.example.com/acme/widgets.git", "false", true},
+		{"non-github host blocked when flag true", "https://github.example.com/acme/widgets.git", "true", false},
+		{"non-github host blocked when flag TRUE (case-insensitive)", "https://github.example.com/acme/widgets.git", "TRUE", false},
+		{"github.com still matches when flag true", "https://github.com/acme/widgets.git", "true", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Empty string behaves identically to the var being unset, since the
+			// check only looks for the literal value "true".
+			t.Setenv("ARGO_DIFF_DISABLE_NON_GITHUB_REPO_MATCH", tc.disabled)
+			src := ApplicationSource{RepoURL: tc.repoURL}
+			if got := gitRepoMatch(src, owner, repo); got != tc.want {
+				t.Errorf("gitRepoMatch(%+v, %q, %q) with ARGO_DIFF_DISABLE_NON_GITHUB_REPO_MATCH=%q = %v; want %v", src, owner, repo, tc.disabled, got, tc.want)
+			}
+		})
 	}
 }

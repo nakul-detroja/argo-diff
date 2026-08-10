@@ -3,17 +3,14 @@ name: Docker build
 
 on:
   push:
-    tags:
-      - '[0-9]+.[0-9]+.[0-9]+'
-      - '[0-9]+.[0-9]+.[0-9]+-*'
     branches: [main]
     paths:
       - '**/**.go'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/dockerbuild.yml'
+      - '.goreleaser.yaml'
       - 'Dockerfile'
-      - 'Dockerfile.no-build'
   pull_request:
     branches: [main]
     paths:
@@ -21,8 +18,8 @@ on:
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/dockerbuild.yml'
+      - '.goreleaser.yaml'
       - 'Dockerfile'
-      - 'Dockerfile.no-build'
   workflow_dispatch:
     inputs:
       ref:
@@ -47,59 +44,47 @@ jobs:
     steps:
       -
         name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.inputs.ref || github.ref }}
           fetch-depth: '50'
           fetch-tags: 'true'
       - name: Set up Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
-      - name: Get version from git describe
-        id: version
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
+        with:
+          version: '~> v2'
+          args: >-
+            build --clean --snapshot
+            ${{ github.event_name == 'pull_request' && '--single-target' || '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Remap binaries for Docker build
         run: |
-          VERSION=$(git describe --always --dirty --exclude 'chart-*' --exclude 'actions-*')
-          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
-          echo "Building version: ${VERSION}"
-      - name: Build linux/amd64
-        run: go build -o temp/argo-diff-$GOOS-$GOARCH -ldflags "-extldflags '-static' -X 'main.Version=${{ steps.version.outputs.VERSION }}'" -v ./cmd/
-        env:
-          CGO_ENABLED: 0
-          GOOS: linux
-          GOARCH: amd64
-      - name: Build linux/arm64
-        if: ${{ github.event_name != 'pull_request' }} ## don't build multi-arch on PRs
-        run: go build -o temp/argo-diff-$GOOS-$GOARCH -ldflags "-extldflags '-static' -X 'main.Version=${{ steps.version.outputs.VERSION }}'" -v ./cmd/
-        env:
-          CGO_ENABLED: 0
-          GOOS: linux
-          GOARCH: arm64
-      - name: Build linux/s390x
-        if: ${{ github.event_name != 'pull_request' }} ## don't build multi-arch on PRs
-        run: go build -o temp/argo-diff-$GOOS-$GOARCH -ldflags "-extldflags '-static' -X 'main.Version=${{ steps.version.outputs.VERSION }}'" -v ./cmd/
-        env:
-          CGO_ENABLED: 0
-          GOOS: linux
-          GOARCH: s390x
-      - name: Build linux/ppc64le
-        if: ${{ github.event_name != 'pull_request' }} ## don't build multi-arch on PRs
-        run: go build -o temp/argo-diff-$GOOS-$GOARCH -ldflags "-extldflags '-static' -X 'main.Version=${{ steps.version.outputs.VERSION }}'" -v ./cmd/
-        env:
-          CGO_ENABLED: 0
-          GOOS: linux
-          GOARCH: ppc64le
+          mkdir -p temp
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            ARCHES="amd64"
+          else
+            ARCHES="amd64 arm64 s390x ppc64le"
+          fi
+          for arch in $ARCHES; do
+            src=("dist/argo-diff_linux_${arch}"*/argo-diff)
+            cp "${src[0]}" "temp/argo-diff-linux-${arch}"
+          done
 
       -
         name: Set up QEMU
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
       -
         name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
       -
         name: Log in to container register
         id: login-ghcr
-        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -107,24 +92,22 @@ jobs:
       -
         name: Docker meta
         id: meta
-        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=schedule
             type=ref,event=branch
             type=sha,event=branch
-            type=raw,event=branch,value=${{ steps.version.outputs.VERSION }}
-            type=ref,event=tag
             type=ref,event=pr
             type=sha,event=pr
       -
         name: Build and push linux/amd64
         if: ${{ github.event_name == 'pull_request' }} ## only push amd64 on PRs
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
-          file: Dockerfile.no-build
+          file: Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -132,10 +115,10 @@ jobs:
       -
         name: Build and push multi-arch
         if: ${{ github.event_name != 'pull_request' }} ## push multi-arch when not a PR
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
-          file: Dockerfile.no-build
+          file: Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
