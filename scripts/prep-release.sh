@@ -37,7 +37,7 @@ rm -f charts/argo-diff/Chart.yaml.bak
 sed -i.bak -E "s/^([[:space:]]*newTag: ).+/\1${VERSION}/" docs/k8s/kustomization.yaml
 rm -f docs/k8s/kustomization.yaml.bak
 
-sed -i.bak -E "s#(docker://ghcr\.io/vince-riv/argo-diff:).+'#\1${VERSION}'#" action.yml
+sed -i.bak -E "s#(docker://ghcr\.io/nakul-detroja/argo-diff:).+'#\1${VERSION}'#" action.yml
 rm -f action.yml.bak
 
 helm-docs --chart-search-root=charts
