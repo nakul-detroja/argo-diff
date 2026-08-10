@@ -78,12 +78,19 @@ func main() {
 
 	githubWebhookSecret := os.Getenv("GITHUB_WEBHOOK_SECRET")
 
+	// Routed mode resolves ArgoCD servers and project-scoped tokens per
+	// AppProject from AWS (SSM route maps + Secrets Manager), so the global
+	// ArgoCD environment configuration and its connectivity check don't apply.
+	routedMode := strings.ToLower(os.Getenv("ARGO_DIFF_ROUTED")) == "true"
+
 	// make sure critical secrets are set in the environment
-	if os.Getenv("ARGOCD_AUTH_TOKEN") == "" {
-		log.Fatal().Msg("ARGOCD_AUTH_TOKEN environment variable not set")
-	}
-	if os.Getenv("ARGOCD_SERVER_ADDR") == "" {
-		log.Fatal().Msg("ARGOCD_SERVER_ADDR environment variable not set")
+	if !routedMode {
+		if os.Getenv("ARGOCD_AUTH_TOKEN") == "" {
+			log.Fatal().Msg("ARGOCD_AUTH_TOKEN environment variable not set")
+		}
+		if os.Getenv("ARGOCD_SERVER_ADDR") == "" {
+			log.Fatal().Msg("ARGOCD_SERVER_ADDR environment variable not set")
+		}
 	}
 	if os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN") == "" && os.Getenv("GITHUB_TOKEN") == "" {
 		log.Info().Msg("GITHUB_PERSONAL_ACCESS_TOKEN or GITHUB_TOKEN environment variable not set - assuming Github App installation")
@@ -98,8 +105,10 @@ func main() {
 		serverDevMode = true
 	}
 
-	if err = argocd.ConnectivityCheck(); err != nil {
-		log.Fatal().Err(err).Msg("Connectivity check to ArgoCD failed")
+	if !routedMode {
+		if err = argocd.ConnectivityCheck(); err != nil {
+			log.Fatal().Err(err).Msg("Connectivity check to ArgoCD failed")
+		}
 	}
 
 	// if running under Github Actions, skip github connectivity check

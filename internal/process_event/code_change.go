@@ -56,18 +56,35 @@ func reportReserve(timeout time.Duration) time.Duration {
 	return defaultReportReserve
 }
 
-// timeoutMarkdown renders the PR comment warning about applications that
-// weren't diffed. The list of names is capped so a change matching hundreds of
-// applications can't crowd the diffs out of the comment.
-func timeoutMarkdown(timeout time.Duration, notDiffed []string) string {
+// cappedNames joins application names for a PR comment, capping the list so a
+// change matching hundreds of applications can't crowd the diffs out of the
+// comment.
+func cappedNames(names []string) string {
 	const maxNames = 20
-	names := strings.Join(notDiffed, ", ")
-	if len(notDiffed) > maxNames {
-		names = fmt.Sprintf("%s and %d more", strings.Join(notDiffed[:maxNames], ", "), len(notDiffed)-maxNames)
+	if len(names) > maxNames {
+		return fmt.Sprintf("%s and %d more", strings.Join(names[:maxNames], ", "), len(names)-maxNames)
 	}
+	return strings.Join(names, ", ")
+}
+
+// timeoutMarkdown renders the PR comment warning about applications that
+// weren't diffed.
+func timeoutMarkdown(timeout time.Duration, notDiffed []string) string {
 	md := "\n> [!WARNING]\n"
-	md += fmt.Sprintf("> argo-diff ran out of time, so %d application(s) were **not** diffed: %s\n", len(notDiffed), names)
+	md += fmt.Sprintf("> argo-diff ran out of time, so %d application(s) were **not** diffed: %s\n", len(notDiffed), cappedNames(notDiffed))
 	md += fmt.Sprintf(">\n> Raise the timeout (currently %s, set via `ARGO_DIFF_TIMEOUT` or the `timeout` input in GitHub Actions) to diff them.\n", timeout)
+	return md
+}
+
+// skippedMarkdown renders the PR comment warning about applications skipped
+// because they have no manifest-generate-paths annotation while
+// ARGO_DIFF_REQUIRE_MANIFEST_PATHS is set. Without this the run looks clean
+// whether an application genuinely had no changes or was never diffed at all,
+// which is the one way path filtering can hide a real change from a reviewer.
+func skippedMarkdown(skipped []string) string {
+	md := "\n> [!WARNING]\n"
+	md += fmt.Sprintf("> %d application(s) were **not** diffed: they have no `argocd.argoproj.io/manifest-generate-paths` annotation and `ARGO_DIFF_REQUIRE_MANIFEST_PATHS` is set: %s\n", len(skipped), cappedNames(skipped))
+	md += ">\n> Annotate them to include them in this diff, or unset `ARGO_DIFF_REQUIRE_MANIFEST_PATHS` to diff every application matching the repo.\n"
 	return md
 }
 
@@ -143,7 +160,7 @@ func ProcessCodeChange(eventInfo webhook.EventInfo, devMode bool, wg *sync.WaitG
 	reserve := reportReserve(timeout)
 	diffCtx, diffCancel := context.WithTimeout(ctx, timeout-reserve)
 	defer diffCancel()
-	appResList, notDiffed, err := argocd.GetApplicationChanges(diffCtx, eventInfo)
+	appResList, notDiffed, skipped, err := argocd.GetApplicationChanges(diffCtx, eventInfo)
 
 	// report on a context of its own: the one above may be at or past its
 	// deadline, and a partial comment is far more useful than no comment
@@ -199,6 +216,9 @@ func ProcessCodeChange(eventInfo webhook.EventInfo, devMode bool, wg *sync.WaitG
 	if len(notDiffed) > 0 {
 		changeCountStr += fmt.Sprintf(" [%d apps not diffed]", len(notDiffed))
 	}
+	if len(skipped) > 0 {
+		changeCountStr += fmt.Sprintf(" [%d apps skipped]", len(skipped))
+	}
 	markdownStart := changeCountStr // markdownStart is the pre-amble of the github comment
 
 	if errorCount > 0 {
@@ -234,8 +254,11 @@ func ProcessCodeChange(eventInfo webhook.EventInfo, devMode bool, wg *sync.WaitG
 	if len(notDiffed) > 0 {
 		markdownStart += timeoutMarkdown(timeout, notDiffed)
 	}
+	if len(skipped) > 0 {
+		markdownStart += skippedMarkdown(skipped)
+	}
 	cMarkdown.Preamble = markdownStart
-	if changeCount == 0 && firstError == "" && len(notDiffed) == 0 {
+	if changeCount == 0 && firstError == "" && len(notDiffed) == 0 && len(skipped) == 0 {
 		// if there are no changes or warnings, don't comment (but clear out any existing comments)
 		_, _ = github.Comment(reportCtx, eventInfo.RepoOwner, eventInfo.RepoName, eventInfo.PrNum, eventInfo.Sha, []string{})
 	} else {
