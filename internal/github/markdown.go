@@ -118,6 +118,11 @@ type ArgoAppMarkdown struct {
 	Preamble     string
 	Resources    []string
 	Closing      string
+	// UiBaseUrl overrides the global ARGOCD_UI_BASE_URL for this app's link.
+	// Routed mode diffs applications on several ArgoCD servers in one run, so
+	// the UI base is per-application state captured at collection time rather
+	// than a single process-wide value.
+	UiBaseUrl string
 }
 
 type CommentMarkdown struct {
@@ -209,8 +214,12 @@ func (a ArgoAppMarkdown) OverviewStr(continued bool) string {
 	} else {
 		md += fmt.Sprintf("<summary>=== %s ===</summary>\n\n", capitalizeWords(a.AppName))
 	}
-	if argocdUiUrl != "" {
-		applicationUrl := fmt.Sprintf("%s/applications/argocd/%s", argocdUiUrl, a.AppName)
+	uiUrl := argocdUiUrl
+	if a.UiBaseUrl != "" {
+		uiUrl = a.UiBaseUrl
+	}
+	if uiUrl != "" {
+		applicationUrl := fmt.Sprintf("%s/applications/argocd/%s", uiUrl, a.AppName)
 		md += fmt.Sprintf("[%s](%s)\n", applicationUrl, applicationUrl)
 	}
 	md += syncString(a.SyncStatus) + "\n"

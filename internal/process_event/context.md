@@ -3,9 +3,20 @@
 The orchestrator. `ProcessCodeChange()` in `code_change.go` is the whole business logic for one
 event: resolve the PR, diff the matching ArgoCD applications, set a commit status, post a comment.
 
-It is always launched in a goroutine with a `sync.WaitGroup` and a `*error` out-parameter, so the
-webhook server can return `200 OK` immediately while the run-once modes wait and turn `*callerErr`
-into an exit code.
+`ProcessCodeChangeRouted()` in `routed.go` is the routed-mode variant (`ARGO_DIFF_ROUTED=true`,
+run-once modes only): it discovers the AppProjects the PR touches via `internal/routes`, diffs
+each target with its own scoped credentials (`argocd.SetTarget()` per target, sequentially,
+within one shared timeout budget), and posts a **single** comment led by a per-project summary
+table (`summaryTable()`), plus warnings for unrouted manifest files (`unroutedMarkdown()`) and
+timed-out apps. Changed-files listing is fatal in routed mode — routing depends on it. Targets
+whose credentials or diffs fail are reported per-row in the table and fail the run; a PR with no
+matched routes and no unrouted manifest files clears stale comments, mirroring the "nothing to
+say" rule below. Per-app UI links use each target's `ui_base_url` (captured on the
+`ArgoAppMarkdown`, since one run now spans several ArgoCD servers).
+
+Both are always launched in a goroutine with a `sync.WaitGroup` and a `*error` out-parameter, so
+the webhook server can return `200 OK` immediately while the run-once modes wait and turn
+`*callerErr` into an exit code.
 
 ## Flow
 

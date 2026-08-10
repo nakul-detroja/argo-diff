@@ -298,6 +298,10 @@ func filterApplications(a []Application, eventInfo webhook.EventInfo, multiSourc
 		}
 	}
 	if len(eventInfo.ChangedFiles) > 0 {
+		if specPathsEnabled() {
+			log.Debug().Msg("Filtering applications on spec-derived source paths (ARGO_DIFF_SPEC_PATHS)")
+			return FilterApplicationsBySpecPaths(appList, eventInfo.ChangedFiles), nil, nil
+		}
 		log.Debug().Msg("Attempting to filter applications based on manifest-generate-paths annotation")
 		matched, skipped := FilterApplicationsByPath(appList, eventInfo.ChangedFiles)
 		return matched, skipped, nil
