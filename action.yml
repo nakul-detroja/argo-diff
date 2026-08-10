@@ -75,7 +75,7 @@ inputs:
 
 runs:
   using: 'docker'
-  image: 'docker://ghcr.io/nakul-detroja/argo-diff:2.13.0-adrise.1'
+  image: 'docker://ghcr.io/nakul-detroja/argo-diff:2.13.0-adrise.2'
   entrypoint: '/app/argo-diff'
   env:
     ARGO_DIFF_COMMENT_PREAMBLE: ${{ inputs.comment_preamble }}
