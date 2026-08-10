@@ -37,6 +37,11 @@ into an exit code.
   `timeoutMarkdown()` so a change matching hundreds of apps can't crowd out the diffs. Reporting
   success on a partial diff is worse than failing.
 - An application with `WarnStr` (its diff failed) counts as an error → `StatusFailure`.
+- `skipped` (applications with no `manifest-generate-paths` annotation, when
+  `ARGO_DIFF_REQUIRE_MANIFEST_PATHS` is set) adds a `> [!WARNING]` block via `skippedMarkdown()` and
+  a `[N apps skipped]` counter, but **does not** fail the run: incomplete annotation coverage is a
+  rollout state, not a broken build. It does force a comment (see the next rule), because a run that
+  diffed nothing and a run that skipped everything otherwise look identical to a reviewer.
 - No changes, no warnings, and nothing skipped → `github.Comment()` is called with an **empty**
   body list, which clears out any stale argo-diff comments.
 - `unknownCount` is vestigial: it is declared and reported but never incremented.
@@ -44,6 +49,6 @@ into an exit code.
 ## Tests
 
 `code_change_test.go` covers the pure helpers only — `processTimeout()`, `reportReserve()`,
-`timeoutMarkdown()`. Those read env on each call, so `t.Setenv` works. `ProcessCodeChange()` itself
+`timeoutMarkdown()`, `skippedMarkdown()`. Those read env on each call, so `t.Setenv` works. `ProcessCodeChange()` itself
 has no test: it reaches the network through the `argocd` and `github` packages, which have no
 injection point at this level.

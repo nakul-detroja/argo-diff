@@ -48,7 +48,7 @@ func TestFilterApplications(t *testing.T) {
 	var a []Application
 
 	evtInfo := wh.EventInfo{RepoOwner: "o", RepoName: "r", RepoDefaultRef: "m", ChangeRef: "m", BaseRef: ""}
-	result, _ := filterApplications(a, evtInfo, false)
+	result, _, _ := filterApplications(a, evtInfo, false)
 	if len(result) != 0 {
 		t.Error("Empty param didn't lead to empty result")
 	}
@@ -66,25 +66,25 @@ func TestFilterApplications(t *testing.T) {
 	}
 
 	evtInfo = wh.EventInfo{RepoOwner: "o", RepoName: "r", RepoDefaultRef: "m", ChangeRef: "m", BaseRef: ""}
-	result, _ = filterApplications(a, evtInfo, false)
+	result, _, _ = filterApplications(a, evtInfo, false)
 	if len(result) != 0 {
 		t.Error("Unmatchable params didn't lead to empty result")
 	}
 
 	evtInfo = wh.EventInfo{RepoOwner: "vince-riv", RepoName: "argo-diff", RepoDefaultRef: "main", ChangeRef: "refs/heads/main", BaseRef: ""}
-	result, _ = filterApplications(a, evtInfo, false)
+	result, _, _ = filterApplications(a, evtInfo, false)
 	if len(result) != 1 {
 		t.Error("Push to main should have matched 1 (auto-sync off)")
 	}
 
 	evtInfo = wh.EventInfo{RepoOwner: "vince-riv", RepoName: "argo-diff", RepoDefaultRef: "main", ChangeRef: "dev", BaseRef: "main"}
-	result, _ = filterApplications(a, evtInfo, false)
+	result, _, _ = filterApplications(a, evtInfo, false)
 	if len(result) != 1 {
 		t.Error("Push to dev should have matched")
 	}
 
 	evtInfo = wh.EventInfo{RepoOwner: "vince-riv", RepoName: "argo-diff", RepoDefaultRef: "main", ChangeRef: "dev", BaseRef: "not_main"}
-	result, _ = filterApplications(a, evtInfo, false)
+	result, _, _ = filterApplications(a, evtInfo, false)
 	if len(result) != 0 {
 		t.Error("Non-main baseRef should not have matched")
 	}
@@ -92,27 +92,27 @@ func TestFilterApplications(t *testing.T) {
 	evtInfo = wh.EventInfo{RepoOwner: "vince-riv", RepoName: "argo-diff", RepoDefaultRef: "main", ChangeRef: "refs/heads/main", BaseRef: ""}
 	a[0].Spec.Source.TargetRevision = "main"
 	a[1].Spec.Source.TargetRevision = "main"
-	result, _ = filterApplications(a, evtInfo, false)
+	result, _, _ = filterApplications(a, evtInfo, false)
 	if len(result) != 1 {
 		t.Error("Push to main should have matched (targetRev main) (auto-sync off)")
 	}
 
 	evtInfo = wh.EventInfo{RepoOwner: "vince-riv", RepoName: "argo-diff", RepoDefaultRef: "main", ChangeRef: "dev", BaseRef: "main"}
-	result, _ = filterApplications(a, evtInfo, false)
+	result, _, _ = filterApplications(a, evtInfo, false)
 	if len(result) != 1 {
 		t.Error("Push to dev should have matched (targetRev main)")
 	}
 
 	evtInfo = wh.EventInfo{RepoOwner: "vince-riv", RepoName: "argo-diff", RepoDefaultRef: "main", ChangeRef: "refs/heads/main", BaseRef: ""}
 	a[1].Spec.SyncPolicy = &SyncPolicy{}
-	result, _ = filterApplications(a, evtInfo, false)
+	result, _, _ = filterApplications(a, evtInfo, false)
 	if len(result) != 1 {
 		t.Error("Push to main should have matched (targetRev main) (auto-sync still off)")
 	}
 
 	evtInfo = wh.EventInfo{RepoOwner: "vince-riv", RepoName: "argo-diff", RepoDefaultRef: "main", ChangeRef: "refs/heads/main", BaseRef: ""}
 	a[1].Spec.SyncPolicy.Automated = &SyncPolicyAutomated{}
-	result, _ = filterApplications(a, evtInfo, false)
+	result, _, _ = filterApplications(a, evtInfo, false)
 	if len(result) != 0 {
 		t.Error("Push to main should NOT have matched (targetRev main) (auto-sync ENABLED)")
 	}
@@ -136,7 +136,7 @@ func TestFilterApplicationsFullyQualifiedRefs(t *testing.T) {
 	a := loadApps(t)
 	a[1].Spec.Source.TargetRevision = "refs/heads/main"
 	evtInfo := wh.EventInfo{RepoOwner: "vince-riv", RepoName: "argo-diff", RepoDefaultRef: "main", ChangeRef: "dev", BaseRef: "main"}
-	result, _ := filterApplications(a, evtInfo, false)
+	result, _, _ := filterApplications(a, evtInfo, false)
 	if len(result) != 1 {
 		t.Error("PR against main should have matched (targetRev refs/heads/main)")
 	}
@@ -145,12 +145,12 @@ func TestFilterApplicationsFullyQualifiedRefs(t *testing.T) {
 	a = loadApps(t)
 	a[1].Spec.Source.TargetRevision = "refs/heads/dev"
 	evtInfo = wh.EventInfo{RepoOwner: "vince-riv", RepoName: "argo-diff", RepoDefaultRef: "main", ChangeRef: "dev", BaseRef: "dev"}
-	result, _ = filterApplications(a, evtInfo, false)
+	result, _, _ = filterApplications(a, evtInfo, false)
 	if len(result) != 1 {
 		t.Error("PR against dev should have matched (targetRev refs/heads/dev)")
 	}
 	evtInfo = wh.EventInfo{RepoOwner: "vince-riv", RepoName: "argo-diff", RepoDefaultRef: "main", ChangeRef: "dev", BaseRef: "main"}
-	result, _ = filterApplications(a, evtInfo, false)
+	result, _, _ = filterApplications(a, evtInfo, false)
 	if len(result) != 0 {
 		t.Error("PR against main should NOT have matched (targetRev refs/heads/dev)")
 	}
@@ -161,7 +161,7 @@ func TestFilterApplicationsFullyQualifiedRefs(t *testing.T) {
 	a[1].Spec.Source.TargetRevision = "refs/heads/main"
 	a[1].Spec.SyncPolicy = &SyncPolicy{Automated: &SyncPolicyAutomated{}}
 	evtInfo = wh.EventInfo{RepoOwner: "vince-riv", RepoName: "argo-diff", RepoDefaultRef: "main", ChangeRef: "refs/heads/main", BaseRef: ""}
-	result, _ = filterApplications(a, evtInfo, false)
+	result, _, _ = filterApplications(a, evtInfo, false)
 	if len(result) != 0 {
 		t.Error("Push to main should NOT have matched (targetRev refs/heads/main) (auto-sync ENABLED)")
 	}
@@ -170,7 +170,7 @@ func TestFilterApplicationsFullyQualifiedRefs(t *testing.T) {
 	a = loadApps(t)
 	a[1].Spec.Source.TargetRevision = "refs/tags/v1.0.0"
 	evtInfo = wh.EventInfo{RepoOwner: "vince-riv", RepoName: "argo-diff", RepoDefaultRef: "main", ChangeRef: "dev", BaseRef: "v1.0.0"}
-	result, _ = filterApplications(a, evtInfo, false)
+	result, _, _ = filterApplications(a, evtInfo, false)
 	if len(result) != 0 {
 		t.Error("PR against a tag name should NOT have matched (targetRev refs/tags/v1.0.0)")
 	}
@@ -194,7 +194,7 @@ func TestFilterApplicationsMultiSource(t *testing.T) {
 	var a []Application
 
 	evtInfo := wh.EventInfo{RepoOwner: "o", RepoName: "r", RepoDefaultRef: "m", ChangeRef: "m", BaseRef: ""}
-	result, _ := filterApplications(a, evtInfo, true)
+	result, _, _ := filterApplications(a, evtInfo, true)
 	if len(result) != 0 {
 		t.Error("Empty param didn't lead to empty result")
 	}
@@ -213,13 +213,13 @@ func TestFilterApplicationsMultiSource(t *testing.T) {
 	}
 
 	evtInfo = wh.EventInfo{RepoOwner: "o", RepoName: "r", RepoDefaultRef: "m", ChangeRef: "m", BaseRef: ""}
-	result, _ = filterApplications(a, evtInfo, true)
+	result, _, _ = filterApplications(a, evtInfo, true)
 	if len(result) != 0 {
 		t.Error("Unmatchable params didn't lead to empty result")
 	}
 
 	evtInfo = wh.EventInfo{RepoOwner: "vince-riv", RepoName: "argo-diff", RepoDefaultRef: "main", ChangeRef: "refs/heads/main", BaseRef: ""}
-	result, _ = filterApplications(a, evtInfo, true)
+	result, _, _ = filterApplications(a, evtInfo, true)
 	if len(result) != 1 {
 		t.Errorf("Push to main should have matched 1 (auto-sync off); got %d", len(result))
 	}
@@ -244,7 +244,7 @@ func TestFilterApplicationsMultiSourceMatchesOnce(t *testing.T) {
 	}
 
 	evtInfo := wh.EventInfo{RepoOwner: "vince-riv", RepoName: "argo-diff", RepoDefaultRef: "main", ChangeRef: "my-branch", BaseRef: "main"}
-	result, err := filterApplications(a, evtInfo, true)
+	result, _, err := filterApplications(a, evtInfo, true)
 	if err != nil {
 		t.Fatalf("filterApplications() err'd: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestGetApplicationChangesOutOfTime(t *testing.T) {
 				BaseRef:        "main",
 				Sha:            "abcdef",
 			}
-			appResList, notDiffed, err := GetApplicationChanges(ctx, evtInfo)
+			appResList, notDiffed, _, err := GetApplicationChanges(ctx, evtInfo)
 			if err != nil {
 				t.Errorf("GetApplicationChanges() err'd: %v", err)
 			}
@@ -358,7 +358,7 @@ func TestGetApplicationChangesOutOfTimeEnumeratingNestedApps(t *testing.T) {
 		BaseRef:        "main",
 		Sha:            "abcdef",
 	}
-	appResList, notDiffed, err := GetApplicationChanges(ctx, evtInfo)
+	appResList, notDiffed, _, err := GetApplicationChanges(ctx, evtInfo)
 	if err != nil {
 		t.Errorf("GetApplicationChanges() err'd: %v", err)
 	}

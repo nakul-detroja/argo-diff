@@ -75,6 +75,28 @@ func TestTimeoutMarkdown(t *testing.T) {
 	}
 }
 
+func TestSkippedMarkdown(t *testing.T) {
+	md := skippedMarkdown([]string{"app-a", "app-b"})
+	for _, want := range []string{"[!WARNING]", "2 application(s)", "app-a, app-b", "manifest-generate-paths", "ARGO_DIFF_REQUIRE_MANIFEST_PATHS"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("skippedMarkdown() = %q, missing %q", md, want)
+		}
+	}
+
+	// long lists get capped so the diffs aren't crowded out of the comment
+	many := make([]string, 25)
+	for i := range many {
+		many[i] = fmt.Sprintf("app-%02d", i)
+	}
+	md = skippedMarkdown(many)
+	if !strings.Contains(md, "and 5 more") {
+		t.Errorf("skippedMarkdown() with 25 apps = %q, want it to cap the list", md)
+	}
+	if !strings.Contains(md, "25 application(s)") {
+		t.Errorf("skippedMarkdown() with 25 apps = %q, want the full count reported", md)
+	}
+}
+
 func TestProcessTimeoutUnset(t *testing.T) {
 	// t.Setenv registers the restore of any pre-existing value for us
 	t.Setenv("ARGO_DIFF_TIMEOUT", "")
