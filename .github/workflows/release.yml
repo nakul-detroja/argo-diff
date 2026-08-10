@@ -53,7 +53,7 @@ jobs:
       - name: Verify action.yml image matches release version
         run: |
           VERSION="${{ steps.relmeta.outputs.version }}"
-          if ! grep -qF "docker://ghcr.io/vince-riv/argo-diff:${VERSION}'" action.yml; then
+          if ! grep -qF "docker://ghcr.io/nakul-detroja/argo-diff:${VERSION}'" action.yml; then
             echo "::error::action.yml is not pinned to ${VERSION} - run scripts/prep-release.sh ${VERSION}, merge it, then tag" >&2
             exit 1
           fi
