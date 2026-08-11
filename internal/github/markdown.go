@@ -183,7 +183,9 @@ func (c CommentMarkdown) String() []string {
 }
 
 func (a *ArgoAppMarkdown) AddResourceDiff(group, kind, name, ns, diffStr string) {
-	md := "\n<details open>\n"
+	// Keep large manifest diffs collapsed while leaving the application overview
+	// visible in the PR comment.
+	md := "\n<details>\n"
 	md += fmt.Sprintf("  <summary>===== %s/%s %s/%s =====</summary>\n\n", group, kind, ns, name)
 	diffMd := ""
 	if diffStr != "" {
